@@ -46,22 +46,24 @@ internal fun DashboardHome(apps: List<CarApp>, prefs: CarLauncherPrefs, visible:
             }
         }
     }
-    if (choosing >= 0) AlertDialog(onDismissRequest = { choosing = -1 },
-        title = { Text("Choose ${if (choosing == 0) "left" else "right"} app") },
+    // Capture the cell: closing sets choosing = -1 while the list content may still re-run.
+    val cell = choosing
+    if (cell >= 0) AlertDialog(onDismissRequest = { choosing = -1 },
+        title = { Text("Choose ${if (cell == 0) "left" else "right"} app") },
         text = {
             LazyColumn(Modifier.heightIn(max = 400.dp)) {
                 // Reload recreates the panel display (same path as picking an app) and relaunches the current app.
-                panelApps[choosing]?.let { current ->
+                panelApps[cell]?.let { current ->
                     item(key = "reload") {
-                        Row(Modifier.fillMaxWidth().clickable { revisions[choosing]++; choosing = -1 }.padding(vertical = 16.dp)) {
+                        Row(Modifier.fillMaxWidth().clickable { revisions[cell]++; choosing = -1 }.padding(vertical = 16.dp)) {
                             Text("Reload ${current.label}", color = Car.Accent, fontSize = 18.sp)
                         }
                     }
                 }
                 items(CarLauncherLogic.recentFirst(apps, { it.target }, recent), key = { it.target }) { app ->
-                    val inOtherCell = app.packageName == panelApps[1 - choosing]?.packageName
+                    val inOtherCell = app.packageName == panelApps[1 - cell]?.packageName
                     Row(Modifier.fillMaxWidth().clickable(enabled = !inOtherCell) {
-                        prefs.setPanelApp(choosing, app.target); revisions[choosing]++; choosing = -1
+                        prefs.setPanelApp(cell, app.target); revisions[cell]++; choosing = -1
                     }.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column {
                             Text(app.label, color = if (inOtherCell) Car.TextDim else Car.Text, fontSize = 18.sp)
