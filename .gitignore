@@ -1,0 +1,22 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*/build/
+
+# Generated outputs and machine-local state
+*.apk
+/.kotlin/
+/.phase6-backup/
+/.claude/
+/.hid-completion-backup/
+/.icon-backup/
+/.product-rework-backup/
+
+/iap2/
