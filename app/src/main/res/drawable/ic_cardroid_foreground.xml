@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
     <!-- Android head + native dashboard / play screen. -->
-    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.88" android:scaleY="0.88">
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.8" android:scaleY="0.8">
         <path android:fillColor="@android:color/transparent" android:strokeColor="@color/cardroid_icon_white"
             android:strokeWidth="4" android:strokeLineCap="round" android:pathData="M43,33L37,23M65,33L71,23" />
         <path android:fillColor="@color/cardroid_icon_white" android:fillType="evenOdd"
