@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.InputStream
@@ -34,6 +36,9 @@ class Iap2Transport(
     private val linkSyncParams: LinkSyncParameters,
     private val onLog: (String) -> Unit = {},
 ) : IapTransport {
+    private val _listening = MutableStateFlow(false)
+    val listening: StateFlow<Boolean> = _listening
+
     private val _incomingControl = MutableSharedFlow<Pair<Int, ByteArray>>(extraBufferCapacity = 16)
     override val incomingControl: SharedFlow<Pair<Int, ByteArray>> = _incomingControl
 
@@ -89,6 +94,7 @@ class Iap2Transport(
 
     override fun stop(): Unit = synchronized(lifecycleLock) {
         stopped = true
+        _listening.value = false
         // Cancel before closing sockets so expected shutdown never triggers recovery.
         loopJob?.cancel()
         runCatching { socket?.close() }
@@ -112,6 +118,7 @@ class Iap2Transport(
                             return@withContext
                         }
                         serverSocket = server
+                        _listening.value = true
                     }
                     onLog("RFCOMM listening on UUID ${Iap2Constants.SERVICE_UUID_IPHONE}")
                     while (isActive && !stopped) {
@@ -143,7 +150,10 @@ class Iap2Transport(
                 } finally {
                     runCatching { server?.close() }
                     synchronized(lifecycleLock) {
-                        if (serverSocket === server) serverSocket = null
+                        if (serverSocket === server) {
+                            serverSocket = null
+                            _listening.value = false
+                        }
                     }
                 }
                 if (isActive && !stopped) delay(1000)

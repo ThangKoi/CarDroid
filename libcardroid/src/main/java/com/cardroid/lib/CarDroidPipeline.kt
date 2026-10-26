@@ -25,6 +25,8 @@ class CarDroidPipeline private constructor(
     private val carPlay = CarPlaySession(transport, mfi, wifi)
     private var airPlay: AirPlayClient? = null
 
+    val listening: StateFlow<Boolean>? get() = (transport as? Iap2Transport)?.listening
+
     val state: StateFlow<CarPlaySession.State> get() = carPlay.state
 
     /** Hook the app can set to spin up AirPlay/MediaSession once 0x4301 fires. */

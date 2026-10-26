@@ -53,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -61,7 +62,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import com.cardroid.app.car.CarDisplaySection
+import com.cardroid.app.helper.HelperClient
+import com.cardroid.app.shizuku.ShizukuHelperStarter
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import android.net.Uri
+import android.provider.Settings
 import com.cardroid.app.car.CarDisplayState
 import com.cardroid.lib.CarPlaySession
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -82,6 +90,7 @@ class MainActivity : ComponentActivity() {
         // Accessibility and WRITE_SETTINGS are granted from system settings; refresh
         // when the Activity returns to the foreground.
         permissionRevision.value += 1
+        ShizukuHelperStarter.get(applicationContext).initialize()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,11 +118,11 @@ class MainActivity : ComponentActivity() {
                             val missing = PermissionSnapshot.from(this@MainActivity, requiredPermissions()).missing
                             if (missing.isNotEmpty()) permLauncher.launch(missing.toTypedArray())
                         },
+                        onAppSettings = {
+                            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                        },
                         onEnableTouch = {
                             startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        },
-                        onShare = {
-                            startService(Intent(this, CarDroidService::class.java).setAction(CarDroidService.ACTION_START_BT))
                         },
                         onStartBt = {
                             startService(Intent(this, CarDroidService::class.java).setAction(CarDroidService.ACTION_START_BT))
@@ -158,7 +167,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class PermissionSnapshot(val missing: List<String>) {
+internal data class PermissionSnapshot(val missing: List<String>) {
     val allGranted: Boolean get() = missing.isEmpty()
     val bluetoothReady: Boolean get() = missing.none {
         it == Manifest.permission.BLUETOOTH_CONNECT ||
@@ -199,19 +208,22 @@ private fun describeConnection(state: CarPlaySession.State): ConnectionStatus = 
 }
 
 /** The single action a first-time user should take next. */
-private data class NextStep(
+internal data class NextStep(
     val title: String,
     val detail: String,
     val action: String,
     val kind: Kind,
 ) {
-    enum class Kind { Permissions, Bluetooth, Connect, Connecting, Retry, Ready }
+    enum class Kind { Available, Permissions, Bluetooth, ShizukuOpen, ShizukuAllow, Helper, Preparing, Connect, Connecting, Retry, Ready }
 }
 
-private fun nextStep(
+internal fun nextStep(
     permissions: PermissionSnapshot,
     bluetoothOn: Boolean,
     state: CarPlaySession.State,
+    shizuku: ShizukuHelperStarter.State,
+    helper: HelperClient.State,
+    listening: Boolean = false,
 ): NextStep = when {
     !permissions.allGranted -> NextStep(
         "Allow permissions",
@@ -220,24 +232,45 @@ private fun nextStep(
         NextStep.Kind.Permissions,
     )
     !bluetoothOn -> NextStep("Turn on Bluetooth", "Required to reach the car", "Turn on", NextStep.Kind.Bluetooth)
+    helper !is HelperClient.State.Connected && helper !is HelperClient.State.DisplayActive &&
+        (shizuku is ShizukuHelperStarter.State.Unavailable || shizuku is ShizukuHelperStarter.State.Unsupported ||
+            shizuku is ShizukuHelperStarter.State.PermissionDenied) -> NextStep(
+        "Set up Shizuku", if (shizuku is ShizukuHelperStarter.State.PermissionDenied)
+            "Allow CarDroid in Shizuku, then return here" else "Install or start Shizuku, then return here",
+        "Open Shizuku", NextStep.Kind.ShizukuOpen)
+    helper !is HelperClient.State.Connected && helper !is HelperClient.State.DisplayActive &&
+        shizuku is ShizukuHelperStarter.State.NeedsPermission -> NextStep(
+        "Approve Shizuku access", "Allows CarDroid to run apps on the car display", "Approve access", NextStep.Kind.ShizukuAllow)
+    helper !is HelperClient.State.Connected && helper !is HelperClient.State.DisplayActive &&
+        shizuku is ShizukuHelperStarter.State.Starting -> NextStep(
+        "Preparing car display", "Waiting for Shizuku to start the display helper", "Preparing…", NextStep.Kind.Preparing)
+    helper is HelperClient.State.Outdated ||
+        (helper !is HelperClient.State.Connected && helper !is HelperClient.State.DisplayActive && shizuku is ShizukuHelperStarter.State.Error) -> NextStep(
+        "Prepare car display", if (shizuku is ShizukuHelperStarter.State.Error) shizuku.message.take(100)
+            else "The display helper needs an update", "Retry setup", NextStep.Kind.Helper)
+    helper is HelperClient.State.NotRunning && state != CarPlaySession.State.Idle &&
+        state !is CarPlaySession.State.Failed -> NextStep(
+        "Prepare car display", "Finish display setup while the receiver connects", "Prepare display", NextStep.Kind.Helper)
     state is CarPlaySession.State.Failed ->
         NextStep("Couldn't connect", state.reason.ifBlank { "The receiver stopped the handshake" }.take(80), "Try again", NextStep.Kind.Retry)
     state is CarPlaySession.State.CarPlayAirPlayStart ->
-        NextStep("CarPlay is ready", "The helper starts the car launcher automatically", "Connect", NextStep.Kind.Ready)
+        NextStep("Receiver connected", "The car display starts when media is ready", "Receiver connected", NextStep.Kind.Ready)
+    state == CarPlaySession.State.Idle && listening ->
+        NextStep("Waiting for your car", "Select this phone in the car’s CarPlay screen", "Waiting for car…", NextStep.Kind.Available)
     state == CarPlaySession.State.Idle ->
-        NextStep("Connect to your car", "Open CarPlay on the car first", "Connect", NextStep.Kind.Connect)
+        NextStep("Make your phone available", "Then select this phone in the car’s CarPlay screen", "Make available", NextStep.Kind.Connect)
     else -> describeConnection(state).let { NextStep(it.title, it.detail, "Cancel", NextStep.Kind.Connecting) }
 }
 
-private enum class Sheet { Car, Advanced }
+private enum class Sheet { Advanced }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CarDroidScreen(
     permissionSnapshot: PermissionSnapshot,
     onRequestPerms: () -> Unit,
+    onAppSettings: () -> Unit,
     onStartBt: () -> Unit,
-    onShare: () -> Unit,
     onEnableTouch: () -> Unit,
     onStop: () -> Unit,
     onEnableBluetooth: () -> Unit,
@@ -246,20 +279,57 @@ private fun CarDroidScreen(
     val log by CarDroidLog.lines.collectAsState()
     val state by CarDroidLog.state.collectAsState()
     val useHardcodedKeys by CarDroidSettings.useHardcodedMfiKeys.collectAsState()
-    val autoStartHelper by CarDroidSettings.autoStartHelperViaShizuku.collectAsState()
     val autoStartBluetooth by CarDroidSettings.autoStartBluetooth.collectAsState()
     val touchEnabled by RemoteControlService.enabled.collectAsState()
     val carDisplayId by CarDisplayState.displayId.collectAsState()
-    val step = nextStep(permissionSnapshot, bluetoothEnabled(), state)
+    val context = LocalContext.current
+    val starter = remember(context) { ShizukuHelperStarter.get(context).also { it.initialize() } }
+    val shizuku by starter.state.collectAsState()
+    val helper by HelperClient.status.collectAsState()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var bluetoothOn by remember { mutableStateOf(bluetoothEnabled()) }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                starter.initialize()
+                bluetoothOn = bluetoothEnabled()
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(permissionSnapshot, lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                bluetoothOn = bluetoothEnabled()
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+    val listening by CarDroidService.available.collectAsState()
+    val step = nextStep(permissionSnapshot, bluetoothOn, state, shizuku, helper, listening)
+    val sessionActive = listening || (state != CarPlaySession.State.Idle && state !is CarPlaySession.State.Failed)
+    val connect = {
+        CarDroidSettings.setAutoStartHelperViaShizuku(true)
+        onStartBt()
+        if (helper !is HelperClient.State.Connected && helper !is HelperClient.State.DisplayActive &&
+            (shizuku is ShizukuHelperStarter.State.Ready || shizuku is ShizukuHelperStarter.State.Started)) {
+            starter.start(auto = true)
+        }
+    }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val onAction: () -> Unit = when (step.kind) {
         NextStep.Kind.Permissions -> onRequestPerms
         NextStep.Kind.Bluetooth -> onEnableBluetooth
-        NextStep.Kind.Connect, NextStep.Kind.Retry -> onStartBt
+        NextStep.Kind.Connect, NextStep.Kind.Retry -> connect
+        NextStep.Kind.ShizukuOpen -> { { starter.openShizuku(context) } }
+        NextStep.Kind.ShizukuAllow -> { { starter.requestPermission() } }
+        NextStep.Kind.Helper -> { { onStartBt(); starter.restart() } }
+        NextStep.Kind.Preparing, NextStep.Kind.Available -> { {} }
         NextStep.Kind.Connecting -> onStop
-        NextStep.Kind.Ready -> onShare
+        NextStep.Kind.Ready -> connect
     }
 
     Scaffold(
@@ -308,11 +378,32 @@ private fun CarDroidScreen(
                     connecting = step.kind == NextStep.Kind.Connecting,
                     onAction = onAction,
                     onDisconnect = onStop,
+                    canDisconnect = sessionActive,
                 )
-                if (step.kind == NextStep.Kind.Ready) {
-                    TouchCard(enabled = touchEnabled, onOpen = onEnableTouch)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(when (helper) {
+                        is HelperClient.State.Connected, is HelperClient.State.DisplayActive -> "Display helper ready"
+                        HelperClient.State.Connecting -> "Display helper connecting"
+                        HelperClient.State.Outdated -> "Display helper needs restart"
+                        HelperClient.State.NotRunning -> "Display helper idle"
+                    },
+                        modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (carDisplayId >= 0) "Car display active" else "Car display waiting",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                CarDisplayRow(displayId = carDisplayId, onClick = { sheet = Sheet.Car })
+                ConnectionChecklist(
+                    permissions = permissionSnapshot,
+                    bluetoothOn = bluetoothOn,
+                    shizuku = shizuku,
+                    helper = helper,
+                    touchEnabled = touchEnabled,
+                    onPermissions = onRequestPerms,
+                    onAppSettings = onAppSettings,
+                    onBluetooth = onEnableBluetooth,
+                    onShizuku = { if (shizuku is ShizukuHelperStarter.State.NeedsPermission) starter.requestPermission() else starter.openShizuku(context) },
+                    onTouch = onEnableTouch,
+                )
             }
         }
     }
@@ -328,18 +419,12 @@ private fun CarDroidScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 when (sheet) {
-                    Sheet.Car -> {
-                        Text("Car display", style = MaterialTheme.typography.headlineSmall)
-                        CarDisplaySection()
-                    }
                     Sheet.Advanced -> AdvancedSheet(
                         log = log,
                         useHardcodedKeys = useHardcodedKeys,
                         onHardcodedKeys = { CarDroidSettings.setUseHardcodedMfiKeys(it) },
                         autoStartBluetooth = autoStartBluetooth,
                         onAutoStartBluetooth = { CarDroidSettings.setAutoStartBluetooth(it) },
-                        autoStartHelper = autoStartHelper,
-                        onAutoStartHelper = { CarDroidSettings.setAutoStartHelperViaShizuku(it) },
                         onClearLog = { CarDroidLog.clear() },
                     )
                     null -> Unit
@@ -355,6 +440,7 @@ private fun StepCard(
     connecting: Boolean,
     onAction: () -> Unit,
     onDisconnect: () -> Unit,
+    canDisconnect: Boolean,
 ) {
     val dot = when (step.kind) {
         NextStep.Kind.Retry, NextStep.Kind.Permissions -> MaterialTheme.colorScheme.error
@@ -381,53 +467,129 @@ private fun StepCard(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(18.dp))
-        Button(onClick = onAction, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        Button(onClick = onAction, enabled = step.kind !in setOf(NextStep.Kind.Preparing, NextStep.Kind.Available, NextStep.Kind.Ready), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             Text(step.action, style = MaterialTheme.typography.titleSmall)
         }
-        if (step.kind == NextStep.Kind.Ready) {
-            TextButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
+        if (canDisconnect && step.kind != NextStep.Kind.Connecting) {
+            TextButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) { Text(if (step.kind == NextStep.Kind.Available) "Stop waiting" else "Disconnect") }
         }
     }
 }
 
 @Composable
-private fun TouchCard(enabled: Boolean, onOpen: () -> Unit) {
+private fun ConnectionChecklist(
+    permissions: PermissionSnapshot,
+    bluetoothOn: Boolean,
+    shizuku: ShizukuHelperStarter.State,
+    helper: HelperClient.State,
+    touchEnabled: Boolean,
+    onPermissions: () -> Unit,
+    onAppSettings: () -> Unit,
+    onBluetooth: () -> Unit,
+    onShizuku: () -> Unit,
+    onTouch: () -> Unit,
+) {
+    val helperReady = helper is HelperClient.State.Connected || helper is HelperClient.State.DisplayActive
+    val shizukuRunning = shizuku !is ShizukuHelperStarter.State.Unavailable &&
+        shizuku !is ShizukuHelperStarter.State.Unsupported && shizuku !is ShizukuHelperStarter.State.Error
+    val shizukuApproved = shizuku is ShizukuHelperStarter.State.Ready ||
+        shizuku is ShizukuHelperStarter.State.Starting || shizuku is ShizukuHelperStarter.State.Started
+    val permissionGroups = mutableListOf(
+        Triple("Bluetooth access", "Lets your car find this phone and open the first connection. CarDroid then uses Wi-Fi for video and audio.", if (Build.VERSION.SDK_INT >= 31)
+            listOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_SCAN)
+            else emptyList()),
+        Triple("Location", "Android uses this permission to reveal Wi-Fi network names. CarDroid checks the network name to see whether your phone is already on the car’s Wi-Fi.", listOf(Manifest.permission.ACCESS_FINE_LOCATION)),
+    )
+    if (Build.VERSION.SDK_INT >= 33) {
+        permissionGroups += Triple("Nearby Wi-Fi", "Lets CarDroid join the Wi-Fi network shared by your car, which carries video and audio after Bluetooth setup.", listOf(Manifest.permission.NEARBY_WIFI_DEVICES))
+        permissionGroups += Triple("Notifications", "Keeps the CarDroid connection notification visible when you switch to another app.", listOf(Manifest.permission.POST_NOTIFICATIONS))
+    }
+    val runtimeGroups = permissionGroups.filter { it.third.isNotEmpty() }
+    val runtimeDone = runtimeGroups.count { (_, _, required) -> required.none { it in permissions.missing } }
+    val helperAccess = shizukuApproved || helperReady
     ProductCard {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Touch control", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    if (enabled) "On" else "Off",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        Text("Setup checklist", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        ChecklistGroup("Phone setup", runtimeDone + if (bluetoothOn) 1 else 0, runtimeGroups.size + 1) {
+            runtimeGroups.forEach { (title, detail, required) ->
+                val complete = required.none { it in permissions.missing }
+                ChecklistRow(title, "Needs access", detail, complete,
+                    if (complete) null else "Allow", onPermissions)
             }
-            Switch(checked = enabled, onCheckedChange = { onOpen() })
+            ChecklistRow("Bluetooth", "Off", "Bluetooth handles discovery and the first connection with the car. Keep it on while setting up CarPlay; video and audio use Wi-Fi afterward.",
+                bluetoothOn, if (bluetoothOn) null else "Turn on", onBluetooth)
+            TextButton(onClick = onAppSettings) { Text("Manage permissions") }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
+        ChecklistGroup("Display setup", listOf(shizukuRunning, helperAccess, touchEnabled).count { it }, 3) {
+            ChecklistRow("Shizuku service", if (shizuku is ShizukuHelperStarter.State.Unsupported) "Update required"
+                else if (shizuku is ShizukuHelperStarter.State.Error) "Could not check" else "Not running",
+                "Shizuku lets CarDroid start the helper that runs apps on a separate display. Open Shizuku and start its service; after a phone restart, you may need to start it again.", shizukuRunning,
+                if (shizukuRunning) null else "Open", onShizuku)
+            ChecklistRow("Shizuku access", "Needs access", "In Shizuku, allow CarDroid to use its service. This lets CarDroid start the display helper without a computer each time.",
+                helperAccess, if (helperAccess) null else "Set up", onShizuku)
+            ChecklistRow("Touch control", "Optional", "Turn on CarDroid in Android Accessibility to let car-screen taps, swipes, Home and Back control phone mirroring. It also helps open the screen-sharing flow. CarDroid does not read screen text.",
+                touchEnabled, if (touchEnabled) null else "Enable", onTouch)
+        }
+
+    }
+}
+
+@Composable
+private fun ChecklistGroup(title: String, complete: Int, total: Int, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(title) { mutableStateOf(false) }
+    Column {
+        Row(
+            Modifier.fillMaxWidth().clickable(
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClickLabel = if (expanded) "Collapse $title" else "Expand $title",
+            ) { expanded = !expanded }.semantics {
+                stateDescription = if (expanded) "Expanded" else "Collapsed"
+            }.padding(vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(if (complete == total) "✓" else "○", modifier = Modifier.width(30.dp),
+                color = if (complete == total) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                style = MaterialTheme.typography.titleLarge)
+            Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Text("$complete/$total", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(14.dp))
+            Text(if (expanded) "⌃" else "⌄", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+            Column(Modifier.padding(start = 4.dp, bottom = 8.dp), content = content)
         }
     }
 }
 
 @Composable
-private fun CarDisplayRow(displayId: Int, onClick: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = MaterialTheme.shapes.large,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)),
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-    ) {
-        Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(if (displayId >= 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Car display", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    if (displayId >= 0) "Ready" else "Set up apps on the car screen",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+private fun ChecklistRow(title: String, status: String, detail: String, complete: Boolean,
+    action: String? = null, onAction: () -> Unit = {}) {
+    var showExplanation by androidx.compose.runtime.saveable.rememberSaveable(title) { mutableStateOf(false) }
+    Column {
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (complete) "✓" else "○", color = if (complete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                style = MaterialTheme.typography.titleLarge, modifier = Modifier.width(30.dp).semantics {
+                    contentDescription = if (complete) "Complete" else "Pending"
+                })
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                if (!complete) Text(status, style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.outline)
+            androidx.compose.material3.IconButton(onClick = { showExplanation = !showExplanation },
+                modifier = Modifier.semantics {
+                    contentDescription = if (showExplanation) "Hide help for $title" else "About $title"
+                    stateDescription = if (showExplanation) "Expanded" else "Collapsed"
+                }) {
+                Text("ⓘ", style = MaterialTheme.typography.titleMedium,
+                    color = if (showExplanation) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (!complete && action != null) TextButton(onClick = onAction) { Text(action) }
+        }
+        androidx.compose.animation.AnimatedVisibility(visible = showExplanation) {
+            Text(detail, modifier = Modifier.padding(start = 30.dp, end = 12.dp, bottom = 12.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -439,14 +601,11 @@ private fun AdvancedSheet(
     onHardcodedKeys: (Boolean) -> Unit,
     autoStartBluetooth: Boolean,
     onAutoStartBluetooth: (Boolean) -> Unit,
-    autoStartHelper: Boolean,
-    onAutoStartHelper: (Boolean) -> Unit,
     onClearLog: () -> Unit,
 ) {
     Text("Advanced", style = MaterialTheme.typography.headlineSmall)
     SwitchRow("Extracted MFi keys", useHardcodedKeys, onHardcodedKeys)
     SwitchRow("Start Bluetooth on open", autoStartBluetooth, onAutoStartBluetooth)
-    SwitchRow("Start helper with Shizuku", autoStartHelper, onAutoStartHelper)
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("Diagnostics", style = MaterialTheme.typography.titleMedium)

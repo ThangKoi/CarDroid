@@ -379,6 +379,11 @@ class CarDroidService : Service() {
         }
         p.onSessionEnded = { reason -> teardownSession(p, reason) }
         p.start(sc)
+        sc.launch {
+            p.listening?.collect { listening ->
+                if (pipeline === p) available.value = listening
+            }
+        }
         stateJob = sc.launch {
             p.state.collect { s ->
                 CarDroidLog.setState(s)
@@ -649,6 +654,8 @@ class CarDroidService : Service() {
     }
 
     private fun stop() {
+        available.value = false
+        CarDroidLog.setState(com.cardroid.lib.CarPlaySession.State.Idle)
         airPlay?.stop(); airPlay = null
         identityName = null
         helperClient?.stopDisplay(); mode = Mode.NONE
@@ -694,6 +701,7 @@ class CarDroidService : Service() {
     }
 
     companion object {
+        internal val available = kotlinx.coroutines.flow.MutableStateFlow(false)
         const val ACTION_START_BT = "com.cardroid.app.START_BT"
         const val ACTION_STOP = "com.cardroid.app.STOP"
         // Back-compat with older intent name from earlier code.
