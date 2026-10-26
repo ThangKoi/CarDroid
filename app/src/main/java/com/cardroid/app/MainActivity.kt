@@ -307,6 +307,20 @@ private fun CarDroidScreen(
         }
     }
     val listening by CarDroidService.available.collectAsState()
+    val starPrompt by CarDroidService.starPrompt.collectAsState()
+    if (starPrompt) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { CarDroidService.starPrompt.value = false },
+        title = { Text("Thanks for driving with CarDroid") },
+        text = { Text("Enjoying it? Give CarDroid a star on GitHub.\n${CarDroidService.GITHUB_URL}") },
+        confirmButton = {
+            TextButton(onClick = {
+                CarDroidService.starPrompt.value = false
+                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(CarDroidService.GITHUB_URL))) }
+            }) { Text("Star on GitHub") }
+        },
+        dismissButton = { TextButton(onClick = { CarDroidService.starPrompt.value = false }) { Text("Not now") } },
+    )
     val step = nextStep(permissionSnapshot, bluetoothOn, state, shizuku, helper, listening)
     val sessionActive = listening || (state != CarPlaySession.State.Idle && state !is CarPlaySession.State.Failed)
     val connect = {

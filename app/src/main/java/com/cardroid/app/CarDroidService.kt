@@ -652,30 +652,10 @@ class CarDroidService : Service() {
         pendingAirPlayEndpoint = null; joinedNetwork = null
         CarDroidLog.setQuietWire(false)
         CarDroidLog.log("Session: media state cleared ($reason)")
-        if (hadMedia) runCatching { postStarPrompt() }
+        // After each car session the phone UI pops up a link to the GitHub repo.
+        if (hadMedia) starPrompt.value = true
     }
 
-    /** After each car session, link to the GitHub repo so users can star it; tap opens the browser. */
-    private fun postStarPrompt() {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(SESSION_CHANNEL_ID) == null) {
-            nm.createNotificationChannel(NotificationChannel(
-                SESSION_CHANNEL_ID, "Session ended", NotificationManager.IMPORTANCE_LOW))
-        }
-        val open = android.app.PendingIntent.getActivity(this, 0,
-            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(GITHUB_URL))
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-            android.app.PendingIntent.FLAG_IMMUTABLE)
-        nm.notify(STAR_NOTIF_ID, Notification.Builder(this, SESSION_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_cardroid_notification)
-            .setColor(CarDroidPalette.MintArgb)
-            .setContentTitle("Thanks for driving with CarDroid")
-            .setContentText("Enjoying it? Star CarDroid on GitHub")
-            .setStyle(Notification.BigTextStyle().bigText("Enjoying it? Star CarDroid on GitHub:\n$GITHUB_URL"))
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .build())
-    }
 
     private fun stop() {
         available.value = false
@@ -715,6 +695,8 @@ class CarDroidService : Service() {
             nm.createNotificationChannel(NotificationChannel(
                 CHANNEL_ID, "CarDroid", NotificationManager.IMPORTANCE_LOW))
         }
+        // The session-end notification was replaced by an in-app popup.
+        if (Build.VERSION.SDK_INT >= 26) nm.deleteNotificationChannel(LEGACY_SESSION_CHANNEL_ID)
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_cardroid_notification)
             .setColor(CarDroidPalette.MintArgb)
@@ -726,6 +708,8 @@ class CarDroidService : Service() {
 
     companion object {
         internal val available = kotlinx.coroutines.flow.MutableStateFlow(false)
+        /** True after a car session with media ends, until the phone UI shows the GitHub star popup. */
+        internal val starPrompt = kotlinx.coroutines.flow.MutableStateFlow(false)
         const val ACTION_START_BT = "com.cardroid.app.START_BT"
         const val ACTION_STOP = "com.cardroid.app.STOP"
         // Back-compat with older intent name from earlier code.
@@ -733,9 +717,8 @@ class CarDroidService : Service() {
         /** Car display density; revisit in Phase 4 (launcher). */
         private const val NOTIF_ID = 1
         private const val CHANNEL_ID = "cardroid.fg"
-        private const val STAR_NOTIF_ID = 2
-        private const val SESSION_CHANNEL_ID = "cardroid.session"
-        private const val GITHUB_URL = "https://github.com/pavunato/CarDroid"
+        private const val LEGACY_SESSION_CHANNEL_ID = "cardroid.session"
+        const val GITHUB_URL = "https://github.com/pavunato/CarDroid"
         private const val AUTO_START_SETTLE_MS = 3_000L
     }
 }
