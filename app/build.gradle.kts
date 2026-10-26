@@ -14,8 +14,8 @@ android {
         applicationId = "com.cardroid.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     // Release signing comes from the gitignored keystore.properties; without it the release build is unsigned.
