@@ -59,6 +59,10 @@ Signed release builds read a gitignored `keystore.properties` at the repository 
 - [Capture workflow](docs/CAPTURE.md)
 - [Brand assets](docs/brand/README.md)
 
+## Author
+
+Created by [pavunato](https://github.com/pavunato). If CarDroid is useful to you, please [star it on GitHub](https://github.com/pavunato/CarDroid).
+
 ## Acknowledgments
 
 We learned from public protocol research, receiver implementations, and interoperability experiments. These references informed our understanding of discovery, authentication, media transport, and input handling.
