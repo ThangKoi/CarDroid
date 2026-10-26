@@ -20,3 +20,8 @@ local.properties
 /.product-rework-backup/
 
 /iap2/
+
+# Release signing (keep a private backup of the keystore and this file)
+keystore.properties
+*.jks
+*.keystore

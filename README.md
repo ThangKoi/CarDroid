@@ -12,6 +12,18 @@ The project is in active development. Device, Android version, receiver, keyboar
 
 *Layout illustration based on the current UI; app content is illustrative. Home keeps two apps side by side, the small indicators open the app picker, and the other pages provide customizable widgets and an app grid.*
 
+## Download
+
+Get the signed APK from the [latest release](https://github.com/pavunato/CarDroid/releases/latest) and install it on the phone:
+
+```bash
+adb install CarDroid-v0.1.0.apk
+```
+
+- Requires Android 8.0+; phone audio capture needs Android 12+.
+- The display and audio helper starts through [Shizuku](https://shizuku.rikka.app/) or adb, and remote touch needs the CarDroid accessibility service turned on.
+- Release builds use a different signing key from local debug builds. If a debug build is installed, uninstall it first.
+
 ## Project
 
 - `app`: Android UI, launcher, device integration, and display helper.
@@ -35,6 +47,8 @@ Install the debug build:
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Signed release builds read a gitignored `keystore.properties` at the repository root (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`); without it, `./gradlew :app:assembleRelease` produces an unsigned APK.
 
 ## Documentation
 
