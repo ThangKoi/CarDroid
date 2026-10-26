@@ -1,38 +1,24 @@
 # CarDroid
 
-<img src="docs/brand/cardroid-icon.png" alt="CarDroid" width="112" />
+**Android apps on your car's CarPlay screen.** Wireless, with a side-by-side launcher, widgets, and an app grid built for the car display. Independent app: `com.cardroid.app`.
 
-CarDroid brings an Android launcher to a dedicated car display, with a customizable side-by-side app layout and widget grid. It explores wireless receiver sharing through discovery, pairing, media streaming, and receiver input.
+> **Compatibility scope:** CarDroid is in active development. Results depend on the phone, Android version, and car receiver; device, keyboard, and display lifecycle compatibility still need broader validation.
 
-The project is in active development. Device, Android version, receiver, keyboard, and display lifecycle compatibility still need broader validation.
-
-## Launcher preview
+[Download](https://github.com/pavunato/CarDroid/releases/latest) · [Telegram](https://t.me/+nZx6IUk47ENjN2Nl) · [Report a problem](https://github.com/pavunato/CarDroid/issues)
 
 ![CarDroid launcher: side-by-side apps, customizable widgets, and app grid](docs/images/cardroid-launcher-preview.svg)
 
 *Layout illustration based on the current UI; app content is illustrative. Home keeps two apps side by side, the small indicators open the app picker, and the other pages provide customizable widgets and an app grid.*
 
-## Download
+## What you can do with CarDroid
 
-Get the signed APK from the [latest release](https://github.com/pavunato/CarDroid/releases/latest) and install it on the phone:
-
-```bash
-adb install CarDroid-v0.1.1.apk
-```
-
-- Requires Android 8.0+; phone audio capture needs Android 12+.
-- The display and audio helper starts through [Shizuku](https://shizuku.rikka.app/) or adb, and remote touch needs the CarDroid accessibility service turned on.
-- Release builds use a different signing key from local debug builds. If a debug build is installed, uninstall it first.
-
-## Project
-
-- `app`: Android UI, launcher, device integration, and display helper.
-- `libcardroid`: discovery, session, media, and input protocols.
-- `mfi-bridge`: authentication interfaces and native integration.
-- `tools-runner`: JVM protocol runner and unit tests.
-- `tools/car-display-helper.sh`: adb helper lifecycle commands.
-
-The Android package is `com.cardroid.app`. Builds using the earlier package install separately; existing app data does not migrate automatically.
+- **Run Android apps on the car screen.** Home shows two apps side by side, such as YouTube and Maps, on a separate display from the phone.
+- **Switch and reload panel apps.** Tap the small indicator above a panel to pick another app (recently used apps are listed first) or reload the current one.
+- **Customize the launcher.** Arrange widgets, browse every app in the app grid, and return to recent apps from the side rail.
+- **Hear phone audio through the car speakers.** Media, navigation, and assistant audio play in the car at full volume, independent of the phone's volume.
+- **Control apps from the car.** Car touchscreen and media keys are routed back to the apps on the car display.
+- **Connect wirelessly.** CarDroid sets up the session over Bluetooth, then moves media to Wi-Fi, and can start automatically when Bluetooth connects.
+- **Fall back to phone mirroring** when a separate display isn't available.
 
 ## Build and test
 
@@ -50,16 +36,6 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Signed release builds read a gitignored `keystore.properties` at the repository root (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`); without it, `./gradlew :app:assembleRelease` produces an unsigned APK.
 
-## What you can do with CarDroid
-
-- **Run Android apps on the car screen.** Home shows two apps side by side, such as YouTube and Maps, on a separate display from the phone.
-- **Switch and reload panel apps.** Tap the small indicator above a panel to pick another app (recently used apps are listed first) or reload the current one.
-- **Customize the launcher.** Arrange widgets, browse every app in the app grid, and return to recent apps from the side rail.
-- **Hear phone audio through the car speakers.** Media, navigation, and assistant audio play in the car at full volume, independent of the phone's volume.
-- **Control apps from the car.** Car touchscreen and media keys are routed back to the apps on the car display.
-- **Connect wirelessly.** CarDroid sets up the session over Bluetooth, then moves media to Wi-Fi, and can start automatically when Bluetooth connects.
-- **Fall back to phone mirroring** when a separate display isn't available.
-
 ## Documentation
 
 - [Roadmap](docs/ROADMAP.md)
@@ -68,6 +44,10 @@ Signed release builds read a gitignored `keystore.properties` at the repository 
 - [Receiver compatibility](docs/CAR-COMPATIBILITY.md)
 - [Capture workflow](docs/CAPTURE.md)
 - [Brand assets](docs/brand/README.md)
+
+## Support
+
+Questions, setup help, or bug reports: join the [CarDroid Telegram group](https://t.me/+nZx6IUk47ENjN2Nl).
 
 ## Author
 
