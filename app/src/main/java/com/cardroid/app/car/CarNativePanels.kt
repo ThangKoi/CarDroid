@@ -31,6 +31,7 @@ import kotlinx.coroutines.*
 @Composable
 internal fun DashboardHome(apps: List<CarApp>, prefs: CarLauncherPrefs, visible: Boolean = true) {
     val selected by prefs.panelApps.collectAsState()
+    val recent by prefs.panelRecent.collectAsState()
     val panelApps = selected.mapIndexed { index, target ->
         apps.firstOrNull { it.target == target } ?: apps.firstOrNull {
             it.packageName == if (index == 0) "com.google.android.youtube" else "com.google.android.apps.maps"
@@ -49,7 +50,15 @@ internal fun DashboardHome(apps: List<CarApp>, prefs: CarLauncherPrefs, visible:
         title = { Text("Choose ${if (choosing == 0) "left" else "right"} app") },
         text = {
             LazyColumn(Modifier.heightIn(max = 400.dp)) {
-                items(apps, key = { it.target }) { app ->
+                // Reload recreates the panel display (same path as picking an app) and relaunches the current app.
+                panelApps[choosing]?.let { current ->
+                    item(key = "reload") {
+                        Row(Modifier.fillMaxWidth().clickable { revisions[choosing]++; choosing = -1 }.padding(vertical = 16.dp)) {
+                            Text("Reload ${current.label}", color = Car.Accent, fontSize = 18.sp)
+                        }
+                    }
+                }
+                items(CarLauncherLogic.recentFirst(apps, { it.target }, recent), key = { it.target }) { app ->
                     val inOtherCell = app.packageName == panelApps[1 - choosing]?.packageName
                     Row(Modifier.fillMaxWidth().clickable(enabled = !inOtherCell) {
                         prefs.setPanelApp(choosing, app.target); revisions[choosing]++; choosing = -1

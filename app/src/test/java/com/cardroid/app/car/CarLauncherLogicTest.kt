@@ -67,4 +67,15 @@ class CarLauncherLogicTest {
         )
         assertEquals(listOf(2), CarLauncherLogic.recents(tasks, "com.cardroid.app").map { it.taskId })
     }
+
+    @Test fun pushRecent_movesToFrontWithoutDuplicates_andCaps() {
+        var r = CarLauncherLogic.pushRecent(listOf("a", "b", "c"), "b"); assertEquals(listOf("b", "a", "c"), r)
+        r = (1..20).fold(emptyList()) { acc, i -> CarLauncherLogic.pushRecent(acc, "x$i") }
+        assertEquals(CarLauncherLogic.MAX_RECENT_PANEL, r.size); assertEquals("x20", r.first())
+    }
+
+    @Test fun recentFirst_recentInOrder_skipsUninstalled_thenRestInOrder() {
+        val out = CarLauncherLogic.recentFirst(apps, { it.target }, listOf(k("Spotify"), "gone/X", k("Chrome")))
+        assertEquals(listOf("Spotify", "Chrome", "Calculator", "Maps", "Music", "Settings"), labels(out))
+    }
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
  */
 object CarLauncherLogic {
     const val MAX_PINNED = 8
+    const val MAX_RECENT_PANEL = 8
 
     fun <T> arrange(apps: List<T>, key: (T) -> String, pinned: List<String>, hidden: Set<String>): List<T> {
         val visible = apps.filter { key(it) !in hidden }
@@ -35,6 +36,17 @@ object CarLauncherLogic {
     /** Drops favorites/hidden entries of apps that are no longer installed. */
     fun prune(pinned: List<String>, hidden: Set<String>, installed: Set<String>): Pair<List<String>, Set<String>> =
         pinned.filter { it in installed }.distinct() to hidden.filter { it in installed }.toSet()
+
+    /** Most-recent-first panel picks: [key] moves to the front, the list is capped at [MAX_RECENT_PANEL]. */
+    fun pushRecent(recent: List<String>, key: String): List<String> = (listOf(key) + (recent - key)).take(MAX_RECENT_PANEL)
+
+    /** Recently picked apps first (uninstalled ones skipped), then the rest in the given order. */
+    fun <T> recentFirst(apps: List<T>, key: (T) -> String, recent: List<String>): List<T> {
+        val byKey = apps.associateBy(key)
+        val first = recent.distinct().mapNotNull { byKey[it] }
+        val firstSet = first.toSet()
+        return first + apps.filter { it !in firstSet }
+    }
 
     fun <T> pages(items: List<T>, perPage: Int): List<List<T>> = if (perPage <= 0) emptyList() else items.chunked(perPage)
 
@@ -85,11 +97,14 @@ class CarLauncherPrefs(context: Context) {
 
     private val _panelApps = MutableStateFlow(sp.getString("panel_apps", "\n").orEmpty().split('\n').let { listOf(it.getOrElse(0) { "" }, it.getOrElse(1) { "" }) })
     val panelApps: StateFlow<List<String>> get() = _panelApps
+    private val _panelRecent = MutableStateFlow(sp.getString("panel_recent", "").orEmpty().split('\n').filter { it.isNotBlank() })
+    val panelRecent: StateFlow<List<String>> get() = _panelRecent
     fun setPanelApp(index: Int, target: String) {
         if (index !in 0..1) return
         val updated = _panelApps.value.toMutableList().apply { set(index, target) }
         _panelApps.value = updated
-        sp.edit().putString("panel_apps", updated.joinToString("\n")).apply()
+        _panelRecent.value = CarLauncherLogic.pushRecent(_panelRecent.value, target)
+        sp.edit().putString("panel_apps", updated.joinToString("\n")).putString("panel_recent", _panelRecent.value.joinToString("\n")).apply()
     }
 
     val pinned: StateFlow<List<String>> get() = _pinned
