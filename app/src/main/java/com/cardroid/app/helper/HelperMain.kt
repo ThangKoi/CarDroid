@@ -77,6 +77,7 @@ object HelperMain {
         }
         if (args.contains("--self-test-audio")) { HelperAudioCapture.selfTest(::log); return }
         if (appUid < 0) { log("missing or invalid --app-uid, exiting"); exitProcess(2) }
+        appUidForPanels = appUid
         // ActivityThread/system context must be built on the looper thread; failures only disable displays (reported on START_DISPLAY).
         runCatching { com.cardroid.app.helper.display.FakeContext.get(::log) }.onFailure { log("display bootstrap failed: ${it.javaClass.simpleName}: ${it.message}") }
         val server = try { ServerSocket(port, 4, InetAddress.getByName("127.0.0.1")) } catch (e: Exception) {
@@ -215,24 +216,34 @@ object HelperMain {
     }
 
     private val panelInjectors = mutableMapOf<Int, InputInjector>()
+    private val panelPackages = mutableMapOf<Int, String>()
+
+    private fun refreshPanels() {
+        // dumpsys is available to shell and includes app-owned private displays that
+        // DisplayManager.getDisplay filters out. Run only for launches, never per touch.
+        val process = ProcessBuilder("/system/bin/dumpsys", "-t", "2", "display").redirectErrorStream(true).start()
+        val dump = try { process.inputStream.bufferedReader().use { it.readText() } }
+            finally { process.destroy() }
+        val owned = PanelDisplayInfo.ownedPanels(dump, appUidForPanels)
+        panelPackages.clear()
+        panelPackages.putAll(owned)
+        panelInjectors.keys.retainAll(owned.keys)
+    }
+    private var appUidForPanels = -1
     private fun handlePanel(type: Int, payload: ByteArray) {
         try {
             val (id, body) = HelperProtocol.parsePanelCommand(payload)
             val context = com.cardroid.app.helper.display.FakeContext.get(::log)
-            val manager = context.getSystemService(android.content.Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
-            val target = manager.getDisplay(id) ?: error("panel display removed")
-            check(target.name.startsWith("CarDroid Panel: ")) { "not a native panel" }
-            val info = Class.forName("android.view.DisplayInfo").getDeclaredConstructor().newInstance()
-            check(target.javaClass.getMethod("getDisplayInfo", info.javaClass).invoke(target, info) == true)
-            check(info.javaClass.getField("ownerPackageName").get(info) == "com.cardroid.app") { "panel owner mismatch" }
-            panelInjectors.keys.filter { manager.getDisplay(it) == null }.forEach { panelInjectors.remove(it) }
+            if (type == HelperProtocol.T_PANEL_LAUNCH) refreshPanels()
+            val expected = panelPackages[id]
+            if (expected == null && type == HelperProtocol.T_PANEL_TOUCH && HelperProtocol.parseTouchState(body).isEmpty()) return
+            check(expected != null) { "panel is unavailable or not owned by CarDroid" }
             val input = panelInjectors.getOrPut(id) { InputInjector(::log) }
             if (type == HelperProtocol.T_PANEL_TOUCH) {
                 val contacts = HelperProtocol.parseTouchState(body)
                 input.touch(id, contacts)
             } else if (type == HelperProtocol.T_PANEL_LAUNCH) {
                 val request = HelperProtocol.parseLaunch(body)
-                val expected = target.name.removePrefix("CarDroid Panel: ")
                 check(request.target.substringBefore('/') == expected && request.flags == 0) { "panel app mismatch" }
                 val component = android.content.ComponentName.unflattenFromString(request.target) ?: error("invalid panel app")
                 val launchable = context.packageManager.queryIntentActivities(android.content.Intent(android.content.Intent.ACTION_MAIN)
