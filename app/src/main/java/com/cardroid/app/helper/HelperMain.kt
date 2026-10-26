@@ -24,7 +24,7 @@ import kotlin.system.exitProcess
 
 /**
  * Car-display helper entry. Runs under app_process as the shell UID, no Context:
- *   CLASSPATH=<base.apk> app_process /system/bin --nice-name=cardroid-helper com.cardroid.app.helper.HelperMain --port=27185 --app-uid=<uid>
+ *   CLASSPATH=<base.apk> app_process /system/bin --nice-name=cardroid-helper com.cardroid.app.helper.HelperMain --port=27186 --app-uid=<uid>
  * Protocol v6 (v3 input injection onto the car display; v4 LAUNCH/GO_HOME/LIST_TASKS/MOVE_TASK_TO_FRONT through helper/activity): one CONTROL slot (HELLO/PING/display commands) and one VIDEO slot (accepted only while CONTROL is connected, UID-checked).
  * Diagnostic: `--self-test=<w>x<h>@<fps>:<dpi>` runs the display + encoder without sockets (see SelfTest).
  */

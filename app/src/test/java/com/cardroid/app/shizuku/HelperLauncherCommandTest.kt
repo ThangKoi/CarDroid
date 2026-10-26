@@ -32,4 +32,7 @@ class HelperLauncherCommandTest {
         assertEquals(emptyList<Int>(), HelperLauncherCommand.parsePids("0 -1 2x"))
         assertEquals(emptyList<Int>(), HelperLauncherCommand.parsePids("12 malformed"))
     }
+    @org.junit.Test fun launcherUsesTheClientProtocolPort() {
+        org.junit.Assert.assertEquals(com.cardroid.app.helper.HelperProtocol.PORT, HelperLauncherCommand.DEFAULT_PORT)
+    }
 }

@@ -38,7 +38,7 @@ import java.nio.ByteBuffer
  * Unknown CONTROL types are answered with ERROR(E_UNKNOWN_TYPE) and do not disconnect.
  */
 object HelperProtocol {
-    const val PORT = 27185
+    const val PORT = 27186
     const val MAGIC = 0x50525448 // "PRTH"
     const val PROTOCOL_VERSION = 7
     const val MAX_PAYLOAD = 64 * 1024 // CONTROL role

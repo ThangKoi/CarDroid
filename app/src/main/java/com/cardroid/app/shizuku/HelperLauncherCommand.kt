@@ -7,7 +7,7 @@ package com.cardroid.app.shizuku
 object HelperLauncherCommand {
     const val HELPER_NAME = "cardroid-helper"
     const val LOG_PATH = "/data/local/tmp/cardroid-helper.log"
-    const val DEFAULT_PORT = 27185
+    const val DEFAULT_PORT = com.cardroid.app.helper.HelperProtocol.PORT
     private const val MIN_PORT = 1024
     private const val MAX_PORT = 65535
     private val APK_PATH = Regex("[A-Za-z0-9/_=.~+\\-]+")

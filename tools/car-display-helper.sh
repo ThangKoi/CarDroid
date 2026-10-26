@@ -3,7 +3,7 @@
 # Usage: tools/car-display-helper.sh start|stop|status|logs   (ADB_SERIAL=<serial> to pick a device)
 set -euo pipefail
 PKG=com.cardroid.app
-PORT=${HELPER_PORT:-27185}
+PORT=${HELPER_PORT:-27186}
 LOG=/data/local/tmp/cardroid-helper.log
 ADB=(adb); [ -n "${ADB_SERIAL:-}" ] && ADB=(adb -s "$ADB_SERIAL")
 sh() { "${ADB[@]}" shell "$@" | tr -d '\r'; }
