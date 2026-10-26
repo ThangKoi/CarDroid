@@ -42,6 +42,7 @@ object HelperAudioCapture {
         val input = socket.getInputStream()
         val out = socket.getOutputStream()
         var recorder: AudioRecord? = null
+        var policy: LoopbackMix? = null
         try {
             require(Build.VERSION.SDK_INT >= 31) { "Helper audio requires Android 12+" }
             val request = HelperProtocol.read(input)
@@ -57,13 +58,15 @@ object HelperAudioCapture {
             val bytes = samples * 4 // PCM16 stereo
             val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
             check(minimum > 0) { "Unsupported audio buffer" }
-            // Request unity gain for the remote mix. AudioRecord owns the
-            // full-volume lease and releases it on stop/release or binder death.
+            // A registered loopback mix is the only remote-submix route audio
+            // policy plays at unity gain; the legacy device follows media volume.
+            val mixed = registerLoopbackMix(rate, log)
+            policy = mixed
             val attributesBuilder = AudioAttributes.Builder()
             AudioAttributes.Builder::class.java.getMethod("setInternalCapturePreset", Int::class.javaPrimitiveType)
                 .invoke(attributesBuilder, 8 /* REMOTE_SUBMIX */)
             AudioAttributes.Builder::class.java.getMethod("addTag", String::class.java)
-                .invoke(attributesBuilder, "fixedVolume")
+                .invoke(attributesBuilder, "addr=${mixed.address}")
             val attributes = attributesBuilder.build()
             val builder = AudioRecord.Builder()
                 .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
@@ -80,7 +83,7 @@ object HelperAudioCapture {
             audio.startRecording()
             check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING)
             HelperProtocol.write(out, HelperProtocol.T_AUDIO_READY)
-            log("Audio: REMOTE_SUBMIX started ${rate}Hz stereo fixedVolume=true; phone output redirected")
+            log("Audio: loopback mix started ${rate}Hz stereo addr=${mixed.address}; phone output redirected at unity gain")
             // Socket EOF must stop capture even when AudioRecord.read() is blocked.
             Thread({
                 try { while (input.read() != -1) { } } catch (_: Exception) { }
@@ -103,8 +106,52 @@ object HelperAudioCapture {
         } finally {
             runCatching { recorder?.stop() }
             recorder?.release()
+            policy?.let { runCatching { it.release() } }
             runCatching { socket.close() }
             log("Audio: output capture released")
         }
+    }
+
+    /** Registered audio policy; audio service also drops it if the helper process dies. */
+    private class LoopbackMix(val address: String, val release: () -> Unit)
+
+    // Usages the legacy remote submix redirected: media, games, navigation and assistant.
+    private val LOOPBACK_USAGES = intArrayOf(
+        AudioAttributes.USAGE_MEDIA, AudioAttributes.USAGE_GAME, AudioAttributes.USAGE_UNKNOWN,
+        AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE, AudioAttributes.USAGE_ASSISTANT,
+        AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+
+    // Hidden/system API: android.media.audiopolicy loopback mix registered as the shell.
+    private fun registerLoopbackMix(rate: Int, log: (String) -> Unit): LoopbackMix {
+        val context = FakeContext.get(log)
+        val ruleBuilderClass = Class.forName("android.media.audiopolicy.AudioMixingRule\$Builder")
+        val ruleBuilder = ruleBuilderClass.getConstructor().newInstance()
+        val addRule = ruleBuilderClass.getMethod("addRule", AudioAttributes::class.java, Int::class.javaPrimitiveType)
+        for (usage in LOOPBACK_USAGES) {
+            addRule.invoke(ruleBuilder, AudioAttributes.Builder().setUsage(usage).build(), 1 /* RULE_MATCH_ATTRIBUTE_USAGE */)
+        }
+        val rule = ruleBuilderClass.getMethod("build").invoke(ruleBuilder)
+        val mixClass = Class.forName("android.media.audiopolicy.AudioMix")
+        val mixBuilderClass = Class.forName("android.media.audiopolicy.AudioMix\$Builder")
+        val mixBuilder = mixBuilderClass.getConstructor(rule.javaClass).newInstance(rule)
+        mixBuilderClass.getMethod("setFormat", AudioFormat::class.java).invoke(mixBuilder,
+            AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+        mixBuilderClass.getMethod("setRouteFlags", Int::class.javaPrimitiveType).invoke(mixBuilder, 2 /* ROUTE_FLAG_LOOP_BACK */)
+        val mix = mixBuilderClass.getMethod("build").invoke(mixBuilder)
+        val policyBuilderClass = Class.forName("android.media.audiopolicy.AudioPolicy\$Builder")
+        val policyBuilder = policyBuilderClass.getConstructor(android.content.Context::class.java).newInstance(context)
+        policyBuilderClass.getMethod("addMix", mixClass).invoke(policyBuilder, mix)
+        val audioPolicy = policyBuilderClass.getMethod("build").invoke(policyBuilder)
+        val policyClass = Class.forName("android.media.audiopolicy.AudioPolicy")
+        val manager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val status = android.media.AudioManager::class.java.getMethod("registerAudioPolicy", policyClass)
+            .invoke(manager, audioPolicy) as Int
+        check(status == 0) { "Audio policy registration failed: $status" }
+        val release = { android.media.AudioManager::class.java.getMethod("unregisterAudioPolicy", policyClass)
+            .invoke(manager, audioPolicy); Unit }
+        val address = runCatching { mixClass.getMethod("getRegistration").invoke(mix) as String? }.getOrNull()
+        if (address.isNullOrEmpty()) { runCatching(release); error("Audio policy mix has no address") }
+        return LoopbackMix(address, release)
     }
 }
