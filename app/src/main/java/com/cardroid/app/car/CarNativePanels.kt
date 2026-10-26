@@ -72,18 +72,20 @@ private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean, o
     LaunchedEffect(helper) {
         if (helper is com.cardroid.app.helper.HelperClient.State.Connected || helper is com.cardroid.app.helper.HelperClient.State.DisplayActive) panel?.launchApp()
     }
-    Column(modifier.clip(RoundedCornerShape(22.dp)).background(Car.Surface)) {
-        // A subtle, full-width hit target opens the chooser without taking space from the app.
+    Column(modifier) {
+        // A subtle, full-width hit target opens the chooser; transparent so no strip shows above the app.
         Box(Modifier.fillMaxWidth().height(32.dp).clickable(onClickLabel = "Change app", onClick = onChoose), contentAlignment = Alignment.Center) {
             Box(Modifier.width(40.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Car.TextDim))
         }
-        if (app == null) Text("Tap the indicator to choose an app.", color = Car.TextDim, modifier = Modifier.padding(20.dp))
-        else key(app.target) {
-            error?.let { Text(it, color = Car.Accent, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
-            // Keep the TextureView attached off-page to retain the display and native task.
-            AndroidView(modifier = Modifier.fillMaxWidth().weight(1f), factory = { context ->
-                NativePanelView(context, app) { error = it }.also { panel = it }
-            }, update = { it.inputEnabled = visible }, onRelease = { it.releasePanel(); panel = null })
+        Column(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(22.dp)).background(Car.Surface)) {
+            if (app == null) Text("Tap the indicator to choose an app.", color = Car.TextDim, modifier = Modifier.padding(20.dp))
+            else key(app.target) {
+                error?.let { Text(it, color = Car.Accent, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
+                // Keep the TextureView attached off-page to retain the display and native task.
+                AndroidView(modifier = Modifier.fillMaxWidth().weight(1f), factory = { context ->
+                    NativePanelView(context, app) { error = it }.also { panel = it }
+                }, update = { it.inputEnabled = visible }, onRelease = { it.releasePanel(); panel = null })
+            }
         }
     }
 }
