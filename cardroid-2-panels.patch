@@ -1,0 +1,174 @@
+diff --git a/app/src/main/java/com/cardroid/app/car/CarLauncherUi.kt b/app/src/main/java/com/cardroid/app/car/CarLauncherUi.kt
+index 0fa2adb..7296055 100644
+--- a/app/src/main/java/com/cardroid/app/car/CarLauncherUi.kt
++++ b/app/src/main/java/com/cardroid/app/car/CarLauncherUi.kt
+@@ -101,8 +101,23 @@ private sealed interface Overlay {
+     data object Hidden : Overlay
+ }
+ 
++/**
++ * true  = panels only: no dock, pages, widgets, app grid or overlays; just the two app panels edge to edge (see DashboardHome).
++ * false = the original launcher UI ([FullLauncherScreen]). Flip this flag to go back.
++ */
++private const val PANELS_ONLY = true
++
+ @Composable
+ fun CarLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: Int, onLaunch: (CarApp) -> Unit) {
++    if (PANELS_ONLY) {
++        Box(Modifier.fillMaxSize().background(Car.Bg)) { DashboardHome(apps, prefs, visible = true) }
++    } else {
++        FullLauncherScreen(apps, prefs, homeSignal, onLaunch)
++    }
++}
++
++@Composable
++private fun FullLauncherScreen(apps: List<CarApp>, prefs: CarLauncherPrefs, homeSignal: Int, onLaunch: (CarApp) -> Unit) {
+     val context = LocalContext.current
+     val pinned by prefs.pinned.collectAsState()
+     val hidden by prefs.hidden.collectAsState()
+diff --git a/app/src/main/java/com/cardroid/app/car/CarNativePanels.kt b/app/src/main/java/com/cardroid/app/car/CarNativePanels.kt
+index 229102c..733cea0 100644
+--- a/app/src/main/java/com/cardroid/app/car/CarNativePanels.kt
++++ b/app/src/main/java/com/cardroid/app/car/CarNativePanels.kt
+@@ -10,6 +10,7 @@ import android.view.Surface
+ import android.view.TextureView
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
++import androidx.compose.foundation.gestures.detectTapGestures
+ import androidx.compose.foundation.layout.*
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+@@ -21,6 +22,7 @@ import androidx.compose.runtime.*
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.draw.clip
++import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import androidx.compose.ui.viewinterop.AndroidView
+@@ -28,55 +30,82 @@ import com.cardroid.app.CarDroidLog
+ import com.cardroid.app.helper.HelperProtocol
+ import kotlinx.coroutines.*
+ 
++/** Width of the dark gap between the two panels. Long-pressing it opens the app chooser. */
++private val PANEL_GAP = 28.dp
++/** Corner radius of each panel; 0.dp = square, edge to edge. */
++private val PANEL_CORNER = 0.dp
++
++/**
++ * Apps for the left/right panels. An explicit pick (long-press the gap) wins. Otherwise the left panel defaults to a navigation app
++ * (label contains "vietmap", else Google Maps) and the right panel to a patched YouTube (label contains "morphe"), else Google Maps / YouTube.
++ * The two panels never default to the same app.
++ */
++private fun resolvePanelApps(apps: List<CarApp>, selected: List<String>): List<CarApp?> {
++    val maps = "com.google.android.apps.maps"
++    val youtube = "com.google.android.youtube"
++    fun byLabel(list: List<CarApp>, word: String): CarApp? = list.firstOrNull { it.label.contains(word, ignoreCase = true) }
++    fun byPackage(list: List<CarApp>, pkg: String): CarApp? = list.firstOrNull { it.packageName == pkg }
++    val chosenLeft = apps.firstOrNull { it.target == selected.getOrNull(0) }
++    val chosenRight = apps.firstOrNull { it.target == selected.getOrNull(1) }
++    val left = chosenLeft ?: apps.filter { it.packageName != chosenRight?.packageName }.let { byLabel(it, "vietmap") ?: byPackage(it, maps) }
++    val right = chosenRight ?: apps.filter { it.packageName != left?.packageName }.let { byLabel(it, "morphe") ?: byPackage(it, maps) ?: byPackage(it, youtube) }
++    return listOf(left, right)
++}
++
+ @Composable
+ internal fun DashboardHome(apps: List<CarApp>, prefs: CarLauncherPrefs, visible: Boolean = true) {
+     val selected by prefs.panelApps.collectAsState()
+     val recent by prefs.panelRecent.collectAsState()
+-    val panelApps = selected.mapIndexed { index, target ->
+-        apps.firstOrNull { it.target == target } ?: apps.firstOrNull {
+-            it.packageName == if (index == 0) "com.google.android.youtube" else "com.google.android.apps.maps"
+-        }
+-    }
++    val panelApps = resolvePanelApps(apps, selected)
+     var choosing by remember { mutableIntStateOf(-1) }
+     val revisions = remember { mutableStateListOf(0, 0) }
+-    Row(Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+-        repeat(2) { index ->
+-            key(index, panelApps[index]?.target, revisions[index]) {
+-                NativeAppPanel(panelApps[index], Modifier.weight(1f).fillMaxHeight(), visible) { choosing = index }
+-            }
++    // Edge to edge, no handles or icons: two app panels with a slim dark gap. Long-press the gap to change the apps.
++    Row(Modifier.fillMaxSize()) {
++        key(0, panelApps[0]?.target, revisions[0]) {
++            NativeAppPanel(panelApps[0], Modifier.weight(1f).fillMaxHeight(), visible)
++        }
++        Box(Modifier.width(PANEL_GAP).fillMaxHeight().pointerInput(Unit) { detectTapGestures(onLongPress = { choosing = 1 }) })
++        key(1, panelApps[1]?.target, revisions[1]) {
++            NativeAppPanel(panelApps[1], Modifier.weight(1f).fillMaxHeight(), visible)
+         }
+     }
+     // Capture the cell: closing sets choosing = -1 while the list content may still re-run.
+     val cell = choosing
+     if (cell >= 0) AlertDialog(onDismissRequest = { choosing = -1 },
+-        title = { Text("Choose ${if (cell == 0) "left" else "right"} app") },
++        title = { Text("Chọn app cho khung ${if (cell == 0) "trái" else "phải"}") },
+         text = {
+-            LazyColumn(Modifier.heightIn(max = 400.dp)) {
+-                // Reload recreates the panel display (same path as picking an app) and relaunches the current app.
+-                panelApps[cell]?.let { current ->
+-                    item(key = "reload") {
+-                        Row(Modifier.fillMaxWidth().clickable { revisions[cell]++; choosing = -1 }.padding(vertical = 16.dp)) {
+-                            Text("Reload ${current.label}", color = Car.Accent, fontSize = 18.sp)
++            Column {
++                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
++                    DashboardButton("Khung trái", cell == 0) { choosing = 0 }
++                    DashboardButton("Khung phải", cell == 1) { choosing = 1 }
++                }
++                LazyColumn(Modifier.heightIn(max = 360.dp)) {
++                    // Reload recreates the panel display (same path as picking an app) and relaunches the current app.
++                    panelApps[cell]?.let { current ->
++                        item(key = "reload") {
++                            Row(Modifier.fillMaxWidth().clickable { revisions[cell]++; choosing = -1 }.padding(vertical = 16.dp)) {
++                                Text("Tải lại ${current.label}", color = Car.Accent, fontSize = 18.sp)
++                            }
+                         }
+                     }
+-                }
+-                items(CarLauncherLogic.recentFirst(apps, { it.target }, recent), key = { it.target }) { app ->
+-                    val inOtherCell = app.packageName == panelApps[1 - cell]?.packageName
+-                    Row(Modifier.fillMaxWidth().clickable(enabled = !inOtherCell) {
+-                        prefs.setPanelApp(cell, app.target); revisions[cell]++; choosing = -1
+-                    }.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+-                        Column {
+-                            Text(app.label, color = if (inOtherCell) Car.TextDim else Car.Text, fontSize = 18.sp)
+-                            if (inOtherCell) Text("In the other cell", color = Car.TextDim, fontSize = 13.sp)
++                    items(CarLauncherLogic.recentFirst(apps, { it.target }, recent), key = { it.target }) { app ->
++                        val inOtherCell = app.packageName == panelApps[1 - cell]?.packageName
++                        Row(Modifier.fillMaxWidth().clickable(enabled = !inOtherCell) {
++                            prefs.setPanelApp(cell, app.target); revisions[cell]++; choosing = -1
++                        }.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
++                            Column {
++                                Text(app.label, color = if (inOtherCell) Car.TextDim else Car.Text, fontSize = 18.sp)
++                                if (inOtherCell) Text("Đang ở khung còn lại", color = Car.TextDim, fontSize = 13.sp)
++                            }
+                         }
+                     }
+                 }
+             }
+-        }, confirmButton = { TextButton(onClick = { choosing = -1 }) { Text("Cancel") } })
++        }, confirmButton = { TextButton(onClick = { choosing = -1 }) { Text("Đóng") } })
+ }
+ 
+ @Composable
+-private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean, onChoose: () -> Unit) {
++private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean) {
+     var error by remember(app?.target) { mutableStateOf<String?>(null) }
+     var panel by remember { mutableStateOf<NativePanelView?>(null) }
+     val helper by com.cardroid.app.helper.HelperClient.status.collectAsState()
+@@ -84,12 +113,8 @@ private fun NativeAppPanel(app: CarApp?, modifier: Modifier, visible: Boolean, o
+         if (helper is com.cardroid.app.helper.HelperClient.State.Connected || helper is com.cardroid.app.helper.HelperClient.State.DisplayActive) panel?.launchApp()
+     }
+     Column(modifier) {
+-        // A subtle, full-width hit target opens the chooser; transparent so no strip shows above the app.
+-        Box(Modifier.fillMaxWidth().height(32.dp).clickable(onClickLabel = "Change app", onClick = onChoose), contentAlignment = Alignment.Center) {
+-            Box(Modifier.width(40.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Car.TextDim))
+-        }
+-        Column(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(22.dp)).background(Car.Surface)) {
+-            if (app == null) Text("Tap the indicator to choose an app.", color = Car.TextDim, modifier = Modifier.padding(20.dp))
++        Column(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(PANEL_CORNER)).background(Car.Surface)) {
++            if (app == null) Text("Nhấn giữ vạch tối giữa hai khung để chọn app.", color = Car.TextDim, modifier = Modifier.padding(20.dp))
+             else key(app.target) {
+                 error?.let { Text(it, color = Car.Accent, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
+                 // Keep the TextureView attached off-page to retain the display and native task.
